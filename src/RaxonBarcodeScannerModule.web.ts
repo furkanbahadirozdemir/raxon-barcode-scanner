@@ -1,8 +1,18 @@
 import { registerWebModule, NativeModule } from 'expo';
 
-import { RaxonBarcodeScannerModuleEvents } from './RaxonBarcodeScanner.types';
+import {
+  BarcodeScannerOptions,
+  RaxonBarcodeScannerModuleEvents,
+} from './RaxonBarcodeScanner.types';
 
-// RaxonBarcodeScannerModule is not available on the web platform.
-class RaxonBarcodeScannerModule extends NativeModule<RaxonBarcodeScannerModuleEvents> {}
+class RaxonBarcodeScannerModule extends NativeModule<RaxonBarcodeScannerModuleEvents> {
+  startListening(_options?: BarcodeScannerOptions): void {
+    console.warn('raxon-barcode-scanner is only supported on Android.');
+  }
 
-export default registerWebModule(RaxonBarcodeScannerModule, 'RaxonBarcodeScannerModule');
+  stopListening(): void {
+    // no-op
+  }
+}
+
+export default registerWebModule(RaxonBarcodeScannerModule, 'RaxonBarcodeScanner');

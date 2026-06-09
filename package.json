@@ -16,16 +16,30 @@
   "keywords": [
     "react-native",
     "expo",
-    "raxon-barcode-scanner",
-    "RaxonBarcodeScanner"
+    "expo-module",
+    "barcode",
+    "barcode-scanner",
+    "zebra",
+    "datawedge",
+    "enterprise-scanner",
+    "raxon-barcode-scanner"
   ],
-  "repository": "git@github.com:raxonltd/raxon-barcode-scanner.git",
-  "bugs": {
-    "url": "git@github.com:raxonltd/raxon-barcode-scanner.git/issues"
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:raxonltd/raxon-barcode-scanner.git"
   },
-  "author": "Raxon Ltd <furkanbahadirozdemir@nexine.com.tr> ()",
+  "bugs": {
+    "url": "https://github.com/raxonltd/raxon-barcode-scanner/issues"
+  },
+  "author": "Raxon Ltd <furkanbahadirozdemir@nexine.com.tr>",
   "license": "MIT",
-  "homepage": "git@github.com:raxonltd/raxon-barcode-scanner.git#readme",
+  "homepage": "https://github.com/raxonltd/raxon-barcode-scanner#readme",
+  "files": [
+    "android",
+    "build",
+    "expo-module.config.json",
+    "src"
+  ],
   "dependencies": {},
   "devDependencies": {
     "@babel/core": "^7.26.0",
