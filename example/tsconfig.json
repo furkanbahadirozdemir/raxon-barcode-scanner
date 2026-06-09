@@ -1,0 +1,10 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      "raxon-barcode-scanner": ["../src/index"],
+      "raxon-barcode-scanner/*": ["../src/*"]
+    }
+  }
+}
