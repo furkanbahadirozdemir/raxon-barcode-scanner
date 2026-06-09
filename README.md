@@ -6,6 +6,7 @@ Zebra ve benzeri kurumsal Android cihazlarda fiziksel barkod okuyucudan gelen ve
 
 - `useBarcodeScanner` hook ile basit entegrasyon
 - Zebra DataWedge profilini otomatik oluşturma / güncelleme
+- Klavye gibi davranan (HID / keyboard-wedge) okuyucu desteği: tuş vuruşları tamponlanır, Enter/Tab ile tek barkod olarak yayınlanır ve UI'a sızmaz
 - Android 13+ broadcast receiver uyumluluğu
 - Expo Modules API ile autolinking
 
@@ -57,6 +58,7 @@ useBarcodeScanner(enabled, onReadBarcode, {
   intentAction: 'com.myapp.barcode.ACTION',
   profileName: 'MyAppScanner',
   configureDataWedge: true,
+  captureKeyboard: true,
 });
 ```
 
@@ -65,6 +67,7 @@ useBarcodeScanner(enabled, onReadBarcode, {
 | `intentAction` | `com.raxon.barcode.ACTION` | DataWedge broadcast action |
 | `profileName` | `RaxonBarcodeScanner` | DataWedge profil adı |
 | `configureDataWedge` | `true` | Profili otomatik yapılandır |
+| `captureKeyboard` | `true` | Klavye modundaki (HID) okuyucuları yakala |
 
 `configureDataWedge: false` kullanın eğer DataWedge profilini MDM veya manuel olarak yönetiyorsanız. Bu durumda `intentAction` değerinin profildeki Intent Output action ile eşleşmesi gerekir.
 
@@ -88,6 +91,7 @@ npm run open:android
 
 - Zebra TC serisi ve DataWedge yüklü cihazlar
 - DataWedge Intent Output ile broadcast gönderen diğer kurumsal Android cihazlar
+- Klavye (HID / keyboard-wedge) modunda çalışan okuyucular ve el terminalleri
 
 ## npm yayını
 

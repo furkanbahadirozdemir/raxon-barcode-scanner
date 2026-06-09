@@ -4,6 +4,7 @@
   "main": "index.ts",
   "dependencies": {
     "expo": "~56.0.9",
+    "raxon-barcode-scanner": "file:..",
     "react": "19.2.3",
     "react-native": "0.85.3"
   },

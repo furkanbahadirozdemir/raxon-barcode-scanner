@@ -1,11 +1,15 @@
 package expo.modules.raxonbarcodescanner
 
+import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
+import android.view.KeyEvent
+import android.view.Window
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
@@ -33,10 +37,23 @@ class RaxonBarcodeScannerModule : Module() {
       "label_type",
       "aimId"
     )
+
+    // Keyboard-wedge: art arda gelen tuşlar arasında bu süre aşılırsa tampon sıfırlanır.
+    private const val WEDGE_BUFFER_TIMEOUT_MS = 1000L
+
+    private val TERMINATOR_KEY_CODES = setOf(
+      KeyEvent.KEYCODE_ENTER,
+      KeyEvent.KEYCODE_NUMPAD_ENTER,
+      KeyEvent.KEYCODE_TAB
+    )
   }
 
   private var broadcastReceiver: BroadcastReceiver? = null
   private var isListening = false
+  private var keyInterceptor: KeyInterceptorCallback? = null
+  private val wedgeBuffer = StringBuilder()
+  private var lastWedgeKeyTime = 0L
+  private val consumedKeyDowns = mutableSetOf<Int>()
 
   private val context: Context
     get() = requireNotNull(appContext.reactContext)
@@ -69,12 +86,18 @@ class RaxonBarcodeScannerModule : Module() {
     val profileName = (options?.get("profileName") as? String)?.takeIf { it.isNotBlank() }
       ?: DEFAULT_PROFILE_NAME
     val configureDataWedge = options?.get("configureDataWedge") as? Boolean ?: true
+    val captureKeyboard = options?.get("captureKeyboard") as? Boolean ?: true
 
     if (configureDataWedge) {
       configureDataWedgeProfile(profileName, intentAction)
     }
 
     registerBarcodeReceiver(intentAction)
+
+    if (captureKeyboard) {
+      installKeyboardCapture()
+    }
+
     isListening = true
   }
 
@@ -87,8 +110,126 @@ class RaxonBarcodeScannerModule : Module() {
       }
     }
     broadcastReceiver = null
+    uninstallKeyboardCapture()
     isListening = false
   }
+
+  // region Keyboard wedge (HID) scanners
+
+  private fun installKeyboardCapture() {
+    val activity = appContext.activityProvider?.currentActivity ?: return
+    activity.runOnUiThread {
+      val window = activity.window ?: return@runOnUiThread
+      val current = window.callback
+      if (current is KeyInterceptorCallback) {
+        current.enabled = true
+        keyInterceptor = current
+        return@runOnUiThread
+      }
+      val interceptor = KeyInterceptorCallback(current, ::handleWedgeKeyEvent)
+      window.callback = interceptor
+      keyInterceptor = interceptor
+    }
+  }
+
+  private fun uninstallKeyboardCapture() {
+    val interceptor = keyInterceptor ?: return
+    keyInterceptor = null
+    wedgeBuffer.setLength(0)
+    consumedKeyDowns.clear()
+    val activity = appContext.activityProvider?.currentActivity
+    if (activity == null) {
+      interceptor.enabled = false
+      return
+    }
+    activity.runOnUiThread {
+      val window = activity.window
+      if (window?.callback === interceptor) {
+        // Başka bir kütüphane callback'i sarmadıysa orijinali geri koy.
+        window.callback = interceptor.wrapped
+      } else {
+        interceptor.enabled = false
+      }
+    }
+  }
+
+  /**
+   * Klavye gibi davranan (HID/keyboard-wedge) okuyucuların tuş vuruşlarını tamponlar.
+   * Enter/Tab geldiğinde tamponu barkod olarak yayınlar ve tuşu yutar; böylece
+   * Enter odaktaki bileşeni (ör. Switch) tetiklemez.
+   */
+  private fun handleWedgeKeyEvent(event: KeyEvent): Boolean {
+    val isTerminator = event.keyCode in TERMINATOR_KEY_CODES
+    val unicode = event.unicodeChar
+
+    when (event.action) {
+      KeyEvent.ACTION_UP -> {
+        // DOWN'da yutulan tuşların UP'ı da yutulur ki view'lar click üretmesin.
+        return consumedKeyDowns.remove(event.keyCode)
+      }
+      KeyEvent.ACTION_MULTIPLE -> {
+        val characters = event.characters
+        if (!characters.isNullOrEmpty()) {
+          touchWedgeBuffer()
+          wedgeBuffer.append(characters)
+          return true
+        }
+        return false
+      }
+      KeyEvent.ACTION_DOWN -> {
+        if (isTerminator) {
+          if (!wedgeBufferActive()) {
+            // Tampon boşken Enter/Tab normal davranışına bırakılır.
+            return false
+          }
+          val code = wedgeBuffer.toString()
+          wedgeBuffer.setLength(0)
+          consumedKeyDowns.add(event.keyCode)
+          if (code.isNotEmpty()) {
+            sendEvent("onBarcodeScanned", mapOf("code" to code))
+          }
+          return true
+        }
+        if (unicode != 0) {
+          touchWedgeBuffer()
+          wedgeBuffer.append(unicode.toChar())
+          consumedKeyDowns.add(event.keyCode)
+          return true
+        }
+        return false
+      }
+      else -> return false
+    }
+  }
+
+  private fun wedgeBufferActive(): Boolean {
+    return wedgeBuffer.isNotEmpty() &&
+      SystemClock.elapsedRealtime() - lastWedgeKeyTime <= WEDGE_BUFFER_TIMEOUT_MS
+  }
+
+  private fun touchWedgeBuffer() {
+    val now = SystemClock.elapsedRealtime()
+    if (now - lastWedgeKeyTime > WEDGE_BUFFER_TIMEOUT_MS) {
+      wedgeBuffer.setLength(0)
+    }
+    lastWedgeKeyTime = now
+  }
+
+  private class KeyInterceptorCallback(
+    val wrapped: Window.Callback,
+    private val onKeyEvent: (KeyEvent) -> Boolean,
+  ) : Window.Callback by wrapped {
+    var enabled = true
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+      if (enabled && onKeyEvent(event)) {
+        return true
+      }
+      return wrapped.dispatchKeyEvent(event)
+    }
+  }
+
+  // endregion
 
   private fun registerBarcodeReceiver(intentAction: String) {
     val filter = IntentFilter().apply {

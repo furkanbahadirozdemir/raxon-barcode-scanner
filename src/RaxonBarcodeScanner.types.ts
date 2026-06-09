@@ -20,6 +20,13 @@ export type BarcodeScannerOptions = {
    * @default true
    */
   configureDataWedge?: boolean;
+  /**
+   * Capture input from scanners that act as a keyboard (HID / keyboard-wedge).
+   * Keystrokes are buffered and emitted as a single scan when Enter/Tab is
+   * received; the keys are swallowed so they don't interact with the UI.
+   * @default true
+   */
+  captureKeyboard?: boolean;
 };
 
 export type RaxonBarcodeScannerModuleEvents = {

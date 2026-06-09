@@ -33,7 +33,13 @@ export function useBarcodeScanner(
       subscription.remove();
       RaxonBarcodeScanner.stopListening();
     };
-  }, [enabled, options?.intentAction, options?.profileName, options?.configureDataWedge]);
+  }, [
+    enabled,
+    options?.intentAction,
+    options?.profileName,
+    options?.configureDataWedge,
+    options?.captureKeyboard,
+  ]);
 
   return { isListening: enabled };
 }
