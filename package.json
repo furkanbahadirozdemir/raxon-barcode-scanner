@@ -26,7 +26,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git@github.com:raxonltd/raxon-barcode-scanner.git"
+    "url": "git+ssh://git@github.com/raxonltd/raxon-barcode-scanner.git"
   },
   "bugs": {
     "url": "https://github.com/raxonltd/raxon-barcode-scanner/issues"
