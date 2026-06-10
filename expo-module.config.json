@@ -1,5 +1,8 @@
 {
-  "platforms": ["android"],
+  "platforms": ["ios", "android"],
+  "ios": {
+    "modules": ["RaxonBarcodeScannerModule"]
+  },
   "android": {
     "modules": ["expo.modules.raxonbarcodescanner.RaxonBarcodeScannerModule"]
   }

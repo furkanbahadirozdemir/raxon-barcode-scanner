@@ -7,7 +7,7 @@ import {
 
 class RaxonBarcodeScannerModule extends NativeModule<RaxonBarcodeScannerModuleEvents> {
   startListening(_options?: BarcodeScannerOptions): void {
-    console.warn('raxon-barcode-scanner is only supported on Android.');
+    console.warn('raxon-barcode-scanner is only supported on iOS and Android.');
   }
 
   stopListening(): void {
