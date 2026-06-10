@@ -4,6 +4,11 @@
   "main": "index.ts",
   "dependencies": {
     "expo": "~56.0.9",
+    "expo-asset": "~56.0.16",
+    "expo-constants": "~56.0.17",
+    "expo-file-system": "~56.0.7",
+    "expo-font": "~56.0.5",
+    "expo-keep-awake": "~56.0.3",
     "raxon-barcode-scanner": "file:..",
     "react": "19.2.3",
     "react-native": "0.85.3"

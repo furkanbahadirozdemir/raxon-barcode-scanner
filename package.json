@@ -1,6 +1,6 @@
 {
   "name": "raxon-barcode-scanner",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "description": "Zebra and enterprise barcode scanner hook for React Native Expo apps",
   "main": "build/index.js",
   "types": "build/index.d.ts",

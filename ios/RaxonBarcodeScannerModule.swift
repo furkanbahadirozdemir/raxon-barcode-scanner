@@ -33,7 +33,7 @@ public final class RaxonBarcodeScannerModule: Module {
     }
 
     private func startListening(options: [String: Any]?) {
-        guard !isListening else {
+        if isListening {
             stopListening()
         }
 
@@ -52,7 +52,8 @@ public final class RaxonBarcodeScannerModule: Module {
     }
 
     private func setupKeyboardCapture() {
-        guard let viewController = appContext?.currentViewController else {
+        // UIApplication'dan aktif view controller'ı al
+        guard let viewController = findActiveViewController() else {
             return
         }
 
@@ -65,6 +66,22 @@ public final class RaxonBarcodeScannerModule: Module {
             )
             keyboardHandler?.startListening()
         }
+    }
+
+    private func findActiveViewController() -> UIViewController? {
+        // UIApplication üzerinden root view controller'ı bul
+        guard let windowScene = UIApplication.shared.connectedScenes
+            .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
+              let keyWindow = windowScene.windows.first(where: { $0.isKeyWindow }) else {
+            return nil
+        }
+
+        var topController = keyWindow.rootViewController
+        while let presentedController = topController?.presentedViewController {
+            topController = presentedController
+        }
+
+        return topController
     }
 
     private func teardownKeyboardCapture() {
@@ -163,14 +180,18 @@ private final class ExternalKeyboardHandler {
 
         var char: Character?
 
-        // UIKey.characters ile dene
-        if let chars = key.characters, !chars.isEmpty {
+        // UIKey.characters ile dene (String, Optional değil)
+        let chars = key.characters
+        if !chars.isEmpty {
             char = chars.first
         }
 
-        // UIKey.charactersIgnoringModifiers ile dene (Shift/Ctrl/Alt olmadan)
-        if char == nil, let chars = key.charactersIgnoringModifiers, !chars.isEmpty {
-            char = chars.first
+        // UIKey.charactersIgnoringModifiers ile dene (String, Optional değil)
+        if char == nil {
+            let charsIgnoringModifiers = key.charactersIgnoringModifiers
+            if !charsIgnoringModifiers.isEmpty {
+                char = charsIgnoringModifiers.first
+            }
         }
 
         // Eğer hala nil ise, keyCode'dan çevir
@@ -289,11 +310,13 @@ private final class ExternalKeyboardHandler {
     }
 }
 
-// MARK: - UIViewController Extension
+// MARK: - AssociatedKeys
 
-private var AssociatedKeys = (
-    keyboardHandler: "raxon_keyboardHandler"
-)
+private enum AssociatedKeys {
+    static var keyboardHandler: UInt8 = 0
+}
+
+// MARK: - UIViewController Extension
 
 @available(iOS 13.4, *)
 extension UIViewController {
@@ -313,14 +336,5 @@ extension UIViewController {
     @objc dynamic func raxon_pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         // Orijinal implementasyonu çağır
         raxon_pressesEnded(presses, with: event)
-    }
-}
-
-// MARK: - UIKey Extensions
-
-@available(iOS 13.4, *)
-extension UIKey {
-    var keyCode: UIKeyboardHIDUsage {
-        return self.keyCode
     }
 }
