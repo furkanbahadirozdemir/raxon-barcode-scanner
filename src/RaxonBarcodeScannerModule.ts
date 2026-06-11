@@ -6,8 +6,8 @@ import {
 } from './RaxonBarcodeScanner.types';
 
 declare class RaxonBarcodeScannerModule extends NativeModule<RaxonBarcodeScannerModuleEvents> {
-  startListening(options?: BarcodeScannerOptions): void;
-  stopListening(): void;
+  startListening(options: BarcodeScannerOptions): Promise<void>;
+  stopListening(): Promise<void>;
 }
 
 export default requireNativeModule<RaxonBarcodeScannerModule>('RaxonBarcodeScanner');

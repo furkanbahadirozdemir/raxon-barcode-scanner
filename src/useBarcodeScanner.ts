@@ -23,14 +23,18 @@ export function useBarcodeScanner(
       return;
     }
 
-    RaxonBarcodeScanner.startListening(options);
+    let subscription: { remove: () => void } | null = null;
 
-    const subscription = RaxonBarcodeScanner.addListener('onBarcodeScanned', (event) => {
-      onReadBarcodeRef.current(event);
-    });
+    (async () => {
+      await RaxonBarcodeScanner.startListening(options ?? {});
+
+      subscription = RaxonBarcodeScanner.addListener('onBarcodeScanned', (event) => {
+        onReadBarcodeRef.current(event);
+      });
+    })();
 
     return () => {
-      subscription.remove();
+      subscription?.remove();
       RaxonBarcodeScanner.stopListening();
     };
   }, [

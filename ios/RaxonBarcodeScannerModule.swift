@@ -1,14 +1,15 @@
 import ExpoModulesCore
+import GameController
 import UIKit
 
 // MARK: - RaxonBarcodeScannerModule
 
 /// iOS için Bluetooth ve HID barkod okuyucu desteği sağlayan Expo modülü.
-/// Harici klavye olarak davranan Bluetooth barkod okuyucuların tuş vuruşlarını yakalar.
+/// GameController framework'ün GCKeyboard API'si ile donanım klavyesi tuşlarını
+/// responder chain'den bağımsız olarak, sistem seviyesinde yakalar.
 public final class RaxonBarcodeScannerModule: Module {
     private var isListening = false
-    private var captureKeyboard = true
-    private var keyboardHandler: ExternalKeyboardHandler?
+    private var keyboardMonitor: HardwareKeyboardMonitor?
 
     public required init(appContext: AppContext) {
         super.init(appContext: appContext)
@@ -19,12 +20,16 @@ public final class RaxonBarcodeScannerModule: Module {
 
         Events("onBarcodeScanned")
 
-        Function("startListening") { (options: [String: Any]?) in
-            self.startListening(options: options)
+        AsyncFunction("startListening") { (options: [String: Any]?) in
+            await MainActor.run {
+                self.startListening(options: options)
+            }
         }
 
-        Function("stopListening") {
-            self.stopListening()
+        AsyncFunction("stopListening") {
+            await MainActor.run {
+                self.stopListening()
+            }
         }
 
         OnDestroy {
@@ -33,308 +38,159 @@ public final class RaxonBarcodeScannerModule: Module {
     }
 
     private func startListening(options: [String: Any]?) {
-        if isListening {
-            stopListening()
-        }
+        guard !isListening else { return }
 
-        captureKeyboard = options?["captureKeyboard"] as? Bool ?? true
+        let captureKeyboard = options?["captureKeyboard"] as? Bool ?? true
 
         if captureKeyboard {
-            setupKeyboardCapture()
+            let monitor = HardwareKeyboardMonitor()
+            monitor.onBarcodeScanned = { [weak self] code in
+                self?.sendEvent("onBarcodeScanned", ["code": code])
+            }
+            monitor.start()
+            keyboardMonitor = monitor
         }
 
         isListening = true
     }
 
     private func stopListening() {
-        teardownKeyboardCapture()
+        keyboardMonitor?.stop()
+        keyboardMonitor = nil
         isListening = false
-    }
-
-    private func setupKeyboardCapture() {
-        // UIApplication'dan aktif view controller'ı al
-        guard let viewController = findActiveViewController() else {
-            return
-        }
-
-        if #available(iOS 13.4, *) {
-            keyboardHandler = ExternalKeyboardHandler(
-                viewController: viewController,
-                onBarcodeScanned: { [weak self] code in
-                    self?.sendEvent("onBarcodeScanned", ["code": code])
-                }
-            )
-            keyboardHandler?.startListening()
-        }
-    }
-
-    private func findActiveViewController() -> UIViewController? {
-        // UIApplication üzerinden root view controller'ı bul
-        guard let windowScene = UIApplication.shared.connectedScenes
-            .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
-              let keyWindow = windowScene.windows.first(where: { $0.isKeyWindow }) else {
-            return nil
-        }
-
-        var topController = keyWindow.rootViewController
-        while let presentedController = topController?.presentedViewController {
-            topController = presentedController
-        }
-
-        return topController
-    }
-
-    private func teardownKeyboardCapture() {
-        keyboardHandler?.stopListening()
-        keyboardHandler = nil
     }
 }
 
-// MARK: - ExternalKeyboardHandler
+// MARK: - HardwareKeyboardMonitor
 
-/// iOS 13.4+ için harici klavye (Bluetooth barkod okuyucu) girişini yakalayan sınıf.
-/// pressesBegan/pressesEnded API'sini kullanarak fiziksel klavye tuşlarını yakalar.
-@available(iOS 13.4, *)
-private final class ExternalKeyboardHandler {
-    private weak var viewController: UIViewController?
-    private let onBarcodeScanned: (String) -> Void
-    private var keyBuffer: String = ""
+/// GCKeyboard ile donanım klavyesi (Bluetooth barkod okuyucu) girişini izler.
+/// Responder chain'e bağımlı olmadığı için tuş kaybı yaşanmaz ve
+/// ekrandaki input'lar ile etkileşime girmez.
+private final class HardwareKeyboardMonitor {
+    var onBarcodeScanned: ((String) -> Void)?
+
+    private var keyBuffer = ""
     private var lastKeyTime: TimeInterval = 0
-    private let bufferTimeout: TimeInterval = 1.0
+    // Tuşlar arası bu süre aşılırsa tampon sıfırlanır (insan yazısını barkoddan ayırır)
+    private let bufferTimeout: TimeInterval = 0.5
+    private var connectObserver: NSObjectProtocol?
+    private var attachedInputs: [ObjectIdentifier: GCKeyboardInput] = [:]
 
-    // Terminatör tuş kodları
-    private let terminatorKeyCodes: Set<Int> = [
-        36,  // Return/Enter
-        76,  // Numpad Enter
-        48,  // Tab
-        52,  // Numpad Equal (bazı okuyucularda)
-        67,  // Numpad Asterisk (bazı okuyucularda)
-    ]
+    func start() {
+        // Halihazırda bağlı klavye varsa hemen dinlemeye başla
+        attach(to: GCKeyboard.coalesced)
 
-    init(viewController: UIViewController, onBarcodeScanned: @escaping (String) -> Void) {
-        self.viewController = viewController
-        self.onBarcodeScanned = onBarcodeScanned
+        // Sonradan bağlanan klavyeler (örn. Bluetooth okuyucu) için bildirim dinle
+        connectObserver = NotificationCenter.default.addObserver(
+            forName: .GCKeyboardDidConnect,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            self?.attach(to: notification.object as? GCKeyboard)
+        }
     }
 
-    func startListening() {
-        // pressesBegan/pressesEnded metodlarını sarmalamak için swizzling kullanacağız
-        swizzlePressesMethods()
+    func stop() {
+        if let connectObserver {
+            NotificationCenter.default.removeObserver(connectObserver)
+        }
+        connectObserver = nil
 
-        // Ayrıca UIResponder chain'den gelen tuş olaylarını da dinle
-        setupKeyCommandHandling()
-    }
-
-    func stopListening() {
-        unswizzlePressesMethods()
+        for (_, input) in attachedInputs {
+            input.keyChangedHandler = nil
+        }
+        attachedInputs.removeAll()
         keyBuffer = ""
     }
 
-    private func setupKeyCommandHandling() {
-        // UIKeyCommand kullanarak bazı özel tuşları yakalayabiliriz
-        // Ancak tüm tuşları yakalamak için pressesBegan/pressesEnded daha iyi
+    private func attach(to keyboard: GCKeyboard?) {
+        guard let input = keyboard?.keyboardInput else { return }
+
+        let id = ObjectIdentifier(input)
+        guard attachedInputs[id] == nil else { return }
+        attachedInputs[id] = input
+
+        input.keyChangedHandler = { [weak self] keyboardInput, _, keyCode, pressed in
+            guard pressed else { return }
+            self?.handleKey(keyCode, input: keyboardInput)
+        }
     }
 
-    // MARK: - Tuş İşleme
-
-    func handlePress(_ press: UIPress) -> Bool {
-        guard let key = press.key else { return false }
-
-        let keyCode = key.keyCode.rawValue
+    private func handleKey(_ keyCode: GCKeyCode, input: GCKeyboardInput) {
         let now = Date().timeIntervalSince1970
-
-        // Zaman aşımı kontrolü - tuşlar arası 1 saniyeden fazla varsa tamponu sıfırla
         if now - lastKeyTime > bufferTimeout {
             keyBuffer = ""
         }
         lastKeyTime = now
 
-        // Terminatör tuş kontrolü
-        if isTerminator(keyCode) {
-            if !keyBuffer.isEmpty {
-                let code = keyBuffer
-                keyBuffer = ""
-                onBarcodeScanned(code)
-                return true // Tuşu yut
+        // Terminatör: Enter / Numpad Enter / Tab
+        if keyCode == .returnOrEnter || keyCode == .keypadEnter || keyCode == .tab {
+            let code = keyBuffer
+            keyBuffer = ""
+            if !code.isEmpty {
+                let callback = onBarcodeScanned
+                DispatchQueue.main.async {
+                    callback?(code)
+                }
             }
-            // Tampon boşken terminatörü normal davranışa bırak
-            return false
-        }
-
-        // Karakter tuşu mu?
-        if let char = characterFromKey(key) {
-            keyBuffer.append(char)
-            return true // Tuşu yut (UI'ya ulaşmasını engelle)
-        }
-
-        return false
-    }
-
-    private func isTerminator(_ keyCode: Int) -> Bool {
-        return terminatorKeyCodes.contains(keyCode)
-    }
-
-    private func characterFromKey(_ key: UIKey) -> Character? {
-        // Karakter önceliği:
-        // 1. modifiersiz karakter (temel ASCII)
-        // 2. modifiers varsa ve shift varsa büyük harf
-
-        var char: Character?
-
-        // UIKey.characters ile dene (String, Optional değil)
-        let chars = key.characters
-        if !chars.isEmpty {
-            char = chars.first
-        }
-
-        // UIKey.charactersIgnoringModifiers ile dene (String, Optional değil)
-        if char == nil {
-            let charsIgnoringModifiers = key.charactersIgnoringModifiers
-            if !charsIgnoringModifiers.isEmpty {
-                char = charsIgnoringModifiers.first
-            }
-        }
-
-        // Eğer hala nil ise, keyCode'dan çevir
-        if char == nil {
-            char = characterFromKeyCode(key.keyCode.rawValue)
-        }
-
-        return char
-    }
-
-    private func characterFromKeyCode(_ keyCode: Int) -> Character? {
-        // iOS fiziksel klavye key kodlarından karakter dönüşümü
-        // Bluetooth barkod okuyucular genellikle standart USB HID key kodları kullanır
-        let mapping: [Int: Character] = [
-            // Rakamlar (ana klavye)
-            23: "0", 22: "1", 26: "2", 20: "3", 25: "4",
-            29: "5", 27: "6", 24: "7", 28: "8", 21: "9",
-
-            // Numpad rakamlar
-            98: "0", 89: "1", 90: "2", 91: "3", 92: "4",
-            93: "5", 94: "6", 95: "7", 96: "8", 97: "9",
-
-            // Harfler (ana klavye)
-            12: "q", 13: "w", 14: "e", 15: "r", 17: "t",
-            16: "y", 32: "u", 34: "i", 31: "o", 35: "p",
-            0: "a", 1: "s", 2: "d", 3: "f", 5: "g",
-            4: "h", 38: "k", 37: "j", 40: "l", 6: "z",
-            7: "x", 8: "c", 9: "v", 11: "b", 45: "n",
-            46: "m",
-
-            // Özel karakterler
-            51: "\u{0008}", // Backspace (silme)
-            117: "\u{007F}", // Delete
-            42: ",", 43: "-", 44: ".", 47: "/",
-            39: "'", 33: "[", 30: "]", 41: ";", 50: "`",
-            115: "\u{001B}", // Escape
-
-            // Boşluk
-            49: " ",
-        ]
-
-        return mapping[keyCode]
-    }
-
-    // MARK: - Method Swizzling
-
-    private func swizzlePressesMethods() {
-        guard let viewController = viewController else { return }
-
-        let originalPressesBeganSelector = #selector(UIViewController.pressesBegan(_:with:))
-        let swizzledPressesBeganSelector = #selector(UIViewController.raxon_pressesBegan(_:with:))
-
-        let originalPressesEndedSelector = #selector(UIViewController.pressesEnded(_:with:))
-        let swizzledPressesEndedSelector = #selector(UIViewController.raxon_pressesEnded(_:with:))
-
-        swizzleMethod(
-            for: UIViewController.self,
-            originalSelector: originalPressesBeganSelector,
-            swizzledSelector: swizzledPressesBeganSelector
-        )
-
-        swizzleMethod(
-            for: UIViewController.self,
-            originalSelector: originalPressesEndedSelector,
-            swizzledSelector: swizzledPressesEndedSelector
-        )
-
-        // Bu view controller'a weak referans ile handler'a erişim sağla
-        objc_setAssociatedObject(
-            viewController,
-            &AssociatedKeys.keyboardHandler,
-            self,
-            .OBJC_ASSOCIATION_RETAIN_NONATOMIC
-        )
-    }
-
-    private func unswizzlePressesMethods() {
-        // Method swizzling geri alınamaz ama handler'ı temizleyebiliriz
-        if let viewController = viewController {
-            objc_setAssociatedObject(
-                viewController,
-                &AssociatedKeys.keyboardHandler,
-                nil,
-                .OBJC_ASSOCIATION_RETAIN_NONATOMIC
-            )
-        }
-    }
-
-    private func swizzleMethod(
-        for classType: AnyClass,
-        originalSelector: Selector,
-        swizzledSelector: Selector
-    ) {
-        guard let originalMethod = class_getInstanceMethod(classType, originalSelector),
-              let swizzledMethod = class_getInstanceMethod(classType, swizzledSelector) else {
             return
         }
 
-        let didAddMethod = class_addMethod(
-            classType,
-            originalSelector,
-            method_getImplementation(swizzledMethod),
-            method_getTypeEncoding(swizzledMethod)
-        )
+        let shiftPressed =
+            input.button(forKeyCode: .leftShift)?.isPressed == true ||
+            input.button(forKeyCode: .rightShift)?.isPressed == true
 
-        if didAddMethod {
-            class_replaceMethod(
-                classType,
-                swizzledSelector,
-                method_getImplementation(originalMethod),
-                method_getTypeEncoding(originalMethod)
-            )
-        } else {
-            method_exchangeImplementations(originalMethod, swizzledMethod)
-        }
-    }
-}
-
-// MARK: - AssociatedKeys
-
-private enum AssociatedKeys {
-    static var keyboardHandler: UInt8 = 0
-}
-
-// MARK: - UIViewController Extension
-
-@available(iOS 13.4, *)
-extension UIViewController {
-    @objc dynamic func raxon_pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        // Orijinal implementasyonu çağır (swizzling yüzünden bu aslında orijinal)
-        raxon_pressesBegan(presses, with: event)
-
-        // Handler varsa tuşları işle
-        if let handler = objc_getAssociatedObject(self, &AssociatedKeys.keyboardHandler)
-            as? ExternalKeyboardHandler {
-            for press in presses {
-                _ = handler.handlePress(press)
-            }
+        if let char = Self.character(for: keyCode, shifted: shiftPressed) {
+            keyBuffer.append(char)
         }
     }
 
-    @objc dynamic func raxon_pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        // Orijinal implementasyonu çağır
-        raxon_pressesEnded(presses, with: event)
+    // MARK: - GCKeyCode → Karakter eşleştirmesi
+
+    private static func character(for keyCode: GCKeyCode, shifted: Bool) -> Character? {
+        if let letter = letters[keyCode] {
+            return shifted ? Character(letter.uppercased()) : letter
+        }
+        if let pair = symbols[keyCode] {
+            return shifted ? pair.shifted : pair.normal
+        }
+        return keypad[keyCode]
     }
+
+    private static let letters: [GCKeyCode: Character] = [
+        .keyA: "a", .keyB: "b", .keyC: "c", .keyD: "d", .keyE: "e",
+        .keyF: "f", .keyG: "g", .keyH: "h", .keyI: "i", .keyJ: "j",
+        .keyK: "k", .keyL: "l", .keyM: "m", .keyN: "n", .keyO: "o",
+        .keyP: "p", .keyQ: "q", .keyR: "r", .keyS: "s", .keyT: "t",
+        .keyU: "u", .keyV: "v", .keyW: "w", .keyX: "x", .keyY: "y",
+        .keyZ: "z",
+    ]
+
+    private static let symbols: [GCKeyCode: (normal: Character, shifted: Character)] = [
+        .one: ("1", "!"), .two: ("2", "@"), .three: ("3", "#"),
+        .four: ("4", "$"), .five: ("5", "%"), .six: ("6", "^"),
+        .seven: ("7", "&"), .eight: ("8", "*"), .nine: ("9", "("),
+        .zero: ("0", ")"),
+        .spacebar: (" ", " "),
+        .hyphen: ("-", "_"),
+        .equalSign: ("=", "+"),
+        .openBracket: ("[", "{"),
+        .closeBracket: ("]", "}"),
+        .backslash: ("\\", "|"),
+        .semicolon: (";", ":"),
+        .quote: ("'", "\""),
+        .graveAccentAndTilde: ("`", "~"),
+        .comma: (",", "<"),
+        .period: (".", ">"),
+        .slash: ("/", "?"),
+    ]
+
+    private static let keypad: [GCKeyCode: Character] = [
+        .keypad0: "0", .keypad1: "1", .keypad2: "2", .keypad3: "3",
+        .keypad4: "4", .keypad5: "5", .keypad6: "6", .keypad7: "7",
+        .keypad8: "8", .keypad9: "9",
+        .keypadSlash: "/", .keypadAsterisk: "*",
+        .keypadHyphen: "-", .keypadPlus: "+",
+        .keypadPeriod: ".", .keypadEqualSign: "=",
+    ]
 }
